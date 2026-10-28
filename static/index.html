@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo A10: qué pasa cuando una transferencia falla a la mitad</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Public+Sans:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #e8edf1;
+    --panel: #f7f9fa;
+    --ink: #14202b;
+    --muted: #5a6b79;
+    --line: #c9d3db;
+    --bad: #b3261e;
+    --bad-bg: #fbe9e7;
+    --ok: #1b6e47;
+    --ok-bg: #e2f3ea;
+    --warn: #8a5a00;
+    --warn-bg: #fdf1d6;
+    --code-bg: #101a23;
+    --code-ink: #d6e2ea;
+    --sans: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f171e; --panel: #16212a; --ink: #e4ecf1; --muted: #93a5b3; --line: #2a3a46;
+      --bad: #ff8a80; --bad-bg: #3a1c19; --ok: #7fd6a4; --ok-bg: #153325;
+      --warn: #f0c56a; --warn-bg: #352a10; --code-bg: #0a1117;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); line-height: 1.5; }
+  header { padding: 28px clamp(16px, 4vw, 48px) 8px; max-width: 1280px; margin: 0 auto; }
+  h1 { font-size: clamp(1.5rem, 3vw, 2.1rem); font-weight: 800; margin: 0 0 6px; letter-spacing: -0.01em; }
+  header p { margin: 0; color: var(--muted); max-width: 70ch; }
+
+  .controls { max-width: 1280px; margin: 18px auto 0; padding: 0 clamp(16px, 4vw, 48px); }
+  .bar { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 14px; }
+  .bar h2 { font-size: 0.95rem; margin: 0 0 8px; font-weight: 700; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button { font: inherit; font-weight: 500; font-size: 0.9rem; padding: 8px 12px; border-radius: 4px; border: 1px solid var(--line);
+           background: var(--bg); color: var(--ink); cursor: pointer; }
+  button:hover { border-color: var(--ink); }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #3b82f6; outline-offset: 2px; }
+  button.go { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  button.ghost { background: transparent; }
+  button:disabled { opacity: .5; cursor: progress; }
+  form { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+  label { display: grid; gap: 3px; font-size: 0.82rem; color: var(--muted); }
+  input[type=text], input[type=number] { font: inherit; font-family: var(--mono); padding: 7px 9px; border: 1px solid var(--line);
+           border-radius: 4px; background: var(--bg); color: var(--ink); width: 9.5rem; }
+  label.check { display: flex; gap: 6px; align-items: center; color: var(--ink); padding-bottom: 8px; }
+
+  main { max-width: 1280px; margin: 18px auto 40px; padding: 0 clamp(16px, 4vw, 48px); display: grid; gap: 18px;
+         grid-template-columns: 1fr 1fr; }
+  @media (max-width: 880px) { main { grid-template-columns: 1fr; } }
+  .side { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 18px; display: grid; gap: 16px;
+          align-content: start; min-width: 0; }
+  .side.vuln { border-top: 5px solid var(--bad); }
+  .side.safe { border-top: 5px solid var(--ok); }
+  .side h2 { margin: 0; font-size: 1.15rem; }
+  .side .sub { color: var(--muted); font-size: 0.88rem; margin: 2px 0 0; }
+
+  /* Elemento memorable: el medidor de integridad del dinero */
+  .meter { border-radius: 4px; padding: 14px 16px; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .meter.ok { background: var(--ok-bg); color: var(--ok); }
+  .meter.bad { background: var(--bad-bg); color: var(--bad); }
+  .meter .big { font-size: clamp(1.8rem, 4vw, 2.5rem); font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
+  .meter .lbl { font-size: 0.85rem; font-weight: 500; }
+  .meter .state { font-weight: 700; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+  td { padding: 7px 0; border-bottom: 1px solid var(--line); }
+  td:last-child { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: 0; }
+  h3 { margin: 0 0 6px; font-size: 0.9rem; font-weight: 700; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-family: var(--mono); font-size: 0.8rem; font-weight: 500; margin-bottom: 6px; }
+  .badge.s2 { background: var(--ok-bg); color: var(--ok); }
+  .badge.s4 { background: var(--warn-bg); color: var(--warn); }
+  .badge.s5 { background: var(--bad-bg); color: var(--bad); }
+  .badge.s0 { background: var(--line); color: var(--ink); }
+  pre { margin: 0; background: var(--code-bg); color: var(--code-ink); font-family: var(--mono); font-size: 0.78rem; line-height: 1.5;
+        padding: 12px; border-radius: 4px; overflow: auto; max-height: 230px; white-space: pre-wrap; word-break: break-word; }
+  .empty { color: var(--muted); font-size: 0.88rem; margin: 0; }
+  ul.log { list-style: none; margin: 0; padding: 0; font-family: var(--mono); font-size: 0.78rem; display: grid; gap: 4px; }
+  ul.log li { padding: 5px 8px; border-left: 3px solid var(--line); background: var(--bg); overflow-wrap: anywhere; }
+  ul.log li.alert { border-left-color: var(--bad); }
+  ul.log li.ok { border-left-color: var(--ok); }
+  ul.log li.rej { border-left-color: var(--warn); }
+  .note { font-size: 0.85rem; color: var(--muted); margin: 0; }
+  .sr { position: absolute; left: -9999px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Qué pasa cuando una transferencia falla a la mitad</h1>
+  <p>OWASP A10:2025, manejo incorrecto de condiciones excepcionales. La misma operación se envía a dos implementaciones. Fíjate en el total del sistema: sin cambios de dinero externos, siempre debe sumar lo mismo.</p>
+</header>
+
+<section class="controls" aria-label="Controles de la demo">
+  <div class="bar">
+    <div>
+      <h2>Escenarios listos (se envían a las dos APIs a la vez)</h2>
+      <div class="row">
+        <button class="go" data-sc="normal">Transferencia normal</button>
+        <button data-sc="destino">Destino inexistente</button>
+        <button data-sc="caida">Caída a mitad de operación</button>
+        <button data-sc="negativo">Monto negativo</button>
+        <button data-sc="rafaga">Ráfaga de 30 solicitudes</button>
+        <button class="ghost" id="reset">Reiniciar demo</button>
+      </div>
+    </div>
+    <div>
+      <h2>O arma tu propia transferencia</h2>
+      <form id="form">
+        <label>Origen <input type="text" id="origen" value="ANA" autocomplete="off"></label>
+        <label>Destino <input type="text" id="destino" value="BETO" autocomplete="off"></label>
+        <label>Monto <input type="number" id="monto" value="200"></label>
+        <label class="check"><input type="checkbox" id="caida"> Simular caída entre débito y crédito</label>
+        <button type="submit" class="go">Enviar a ambas</button>
+      </form>
+    </div>
+  </div>
+</section>
+
+<main>
+  <section class="side vuln" aria-labelledby="tv" data-mode="vulnerable">
+    <div>
+      <h2 id="tv">Sin controles</h2>
+      <p class="sub">Débito confirmado antes del crédito, sin rollback, errores devueltos tal cual y sin registro.</p>
+    </div>
+    <div class="meter ok" data-el="meter"></div>
+    <div><h3>Saldos</h3><table data-el="balances"></table></div>
+    <div><h3>Respuesta que recibe el cliente</h3><div data-el="resp"><p class="empty">Aún no hay respuestas.</p></div></div>
+    <div><h3>Bitácora del sistema</h3><div data-el="audit"></div></div>
+  </section>
+
+  <section class="side safe" aria-labelledby="ts" data-mode="secure">
+    <div>
+      <h2 id="ts">Con controles</h2>
+      <p class="sub">Transacción atómica, validación de entrada, mensajes genéricos, rate limit, bitácora append-only y alertas.</p>
+    </div>
+    <div class="meter ok" data-el="meter"></div>
+    <div><h3>Saldos</h3><table data-el="balances"></table></div>
+    <div><h3>Respuesta que recibe el cliente</h3><div data-el="resp"><p class="empty">Aún no hay respuestas.</p></div></div>
+    <div><h3>Bitácora del sistema</h3><div data-el="audit"></div></div>
+  </section>
+</main>
+
+<script>
+const MODES = ["vulnerable", "secure"];
+const last = { vulnerable: null, secure: null };
+const money = n => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const $side = m => document.querySelector(`.side[data-mode="${m}"]`);
+const $ = (m, el) => $side(m).querySelector(`[data-el="${el}"]`);
+
+async function api(mode, path, body) {
+  try {
+    const r = await fetch(`/${mode}/${path}`, {
+      method: body === undefined && path !== "reset" ? "GET" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    let data = null;
+    try { data = await r.json(); } catch (_) {}
+    return { status: r.status, data };
+  } catch (_) {
+    return { status: 0, data: { error: "Sin conexión con el servidor" } };
+  }
+}
+
+function renderAccounts(mode, d) {
+  const diff = d.total - d.total_esperado;
+  const m = $(mode, "meter");
+  m.className = "meter " + (diff === 0 ? "ok" : "bad");
+  const estado = diff === 0 ? "Íntegro" : diff < 0 ? `Faltan ${money(-diff)}` : `Sobran ${money(diff)}`;
+  m.innerHTML = `<div><div class="lbl">Total en el sistema (debe ser ${money(d.total_esperado)})</div><div class="big">${money(d.total)}</div></div><div class="state">${estado}</div>`;
+  $(mode, "balances").innerHTML = d.cuentas.map(c => `<tr><td>${esc(c.nombre)}</td><td>${money(c.saldo)}</td></tr>`).join("");
+}
+
+function renderResp(mode) {
+  const r = last[mode], box = $(mode, "resp");
+  if (!r) { box.innerHTML = '<p class="empty">Aún no hay respuestas.</p>'; return; }
+  const cls = r.status === 0 ? "s0" : "s" + String(r.status)[0];
+  const etiqueta = r.label || (r.status === 0 ? "sin conexión" : r.status);
+  box.innerHTML = `<span class="badge ${cls}">${esc(etiqueta)}</span><pre>${esc(JSON.stringify(r.data, null, 2))}</pre>`;
+}
+
+function renderAudit(mode, d) {
+  const box = $(mode, "audit");
+  if (!d.eventos.length) { box.innerHTML = '<p class="empty">Sin eventos registrados.</p>'; return; }
+  box.innerHTML = '<ul class="log">' + d.eventos.map(e => {
+    const k = e.evento.startsWith("ALERTA") || e.evento === "ERROR_INTERNO" ? "alert" : e.evento.endsWith("OK") ? "ok" : "rej";
+    const eid = e.error_id ? ` [${esc(e.error_id)}]` : "";
+    return `<li class="${k}">${esc(e.ts)} ${esc(e.evento)}${eid} ${esc(e.detalle)}</li>`;
+  }).join("") + "</ul>";
+}
+
+async function refresh() {
+  await Promise.all(MODES.map(async m => {
+    const [a, l] = await Promise.all([api(m, "accounts"), api(m, "audit")]);
+    if (a.data) renderAccounts(m, a.data);
+    if (l.data) renderAudit(m, l.data);
+    renderResp(m);
+  }));
+}
+
+function lock(on) { document.querySelectorAll("button").forEach(b => b.disabled = on); }
+
+async function sendOne(payload) {
+  const res = await Promise.all(MODES.map(m => api(m, "transfer", payload)));
+  MODES.forEach((m, i) => { last[m] = res[i]; });
+}
+
+async function burst() {
+  const payload = { origen: "ANA", destino: "BETO", monto: 1, caida_a_mitad: false };
+  for (const m of MODES) {
+    const res = await Promise.all(Array.from({ length: 30 }, () => api(m, "transfer", payload)));
+    const cont = {};
+    res.forEach(r => { cont[r.status] = (cont[r.status] || 0) + 1; });
+    last[m] = { status: 200, label: "30 solicitudes enviadas", data: { enviadas: 30, respuestas_por_codigo_http: cont } };
+  }
+}
+
+const SCENARIOS = {
+  normal:   { origen: "ANA", destino: "BETO", monto: 200, caida_a_mitad: false },
+  destino:  { origen: "ANA", destino: "ZZZ",  monto: 200, caida_a_mitad: false },
+  caida:    { origen: "ANA", destino: "BETO", monto: 200, caida_a_mitad: true },
+  negativo: { origen: "ANA", destino: "BETO", monto: -500, caida_a_mitad: false },
+};
+
+async function run(fn) { lock(true); try { await fn(); await refresh(); } finally { lock(false); } }
+
+document.querySelectorAll("[data-sc]").forEach(b => b.addEventListener("click", () => {
+  const sc = b.dataset.sc;
+  run(() => sc === "rafaga" ? burst() : sendOne(SCENARIOS[sc]));
+}));
+
+document.getElementById("form").addEventListener("submit", e => {
+  e.preventDefault();
+  const payload = {
+    origen: document.getElementById("origen").value.trim(),
+    destino: document.getElementById("destino").value.trim(),
+    monto: parseInt(document.getElementById("monto").value, 10),
+    caida_a_mitad: document.getElementById("caida").checked,
+  };
+  run(() => sendOne(payload));
+});
+
+document.getElementById("reset").addEventListener("click", () => run(async () => {
+  await Promise.all(MODES.map(m => api(m, "reset")));
+  MODES.forEach(m => { last[m] = null; });
+}));
+
+refresh();
+</script>
+</body>
+</html>
