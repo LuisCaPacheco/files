@@ -5,6 +5,8 @@ Incluye puentes a **A09** (Security Logging and Alerting Failures) y **A06** (In
 
 > **Solo para uso educativo y local.** La app escucha únicamente en `127.0.0.1:8000` y funciona sin internet.
 
+¿Van a ensayarla en pareja? Consulten la [guía para el equipo](GUIA_EQUIPO.md).
+
 ## Cómo ejecutar
 
 Requiere Python 3.11 o superior.
