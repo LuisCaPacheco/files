@@ -6,8 +6,9 @@ Una sola app FastAPI expone DOS implementaciones de la misma transferencia:
   /vulnerable/*  -> sin manejo correcto de excepciones (a propósito)
   /secure/*      -> con los controles que recomienda OWASP
 
-Ejecutar:  uvicorn main:app --reload --port 8000   y abrir http://localhost:8000
-SOLO para uso educativo en localhost.
+Ejecutar:  python main.py   (o: uvicorn main:app --host 127.0.0.1 --port 8000)
+y abrir http://127.0.0.1:8000
+SOLO para uso educativo: la app escucha únicamente en 127.0.0.1.
 """
 import logging
 import os
@@ -106,14 +107,17 @@ class Transfer(BaseModel):
     origen: str
     destino: str
     monto: int
-    caida_a_mitad: bool = False   # inyección de fallo SOLO para la demo
+    # Inyección de fallo SOLO para la demo: lanza una excepción entre el débito y
+    # el crédito para que el escenario "caída a mitad de operación" sea repetible.
+    # En un sistema real el fallo vendría de la red, la base de datos, memoria, etc.
+    caida_a_mitad: bool = False
 
 
 class SecureTransfer(BaseModel):
     """Entrada de la API SEGURA: validación estricta de entrada."""
     origen: str = Field(min_length=1, max_length=20, pattern=r"^[A-Za-z]+$")
     destino: str = Field(min_length=1, max_length=20, pattern=r"^[A-Za-z]+$")
-    monto: int = Field(gt=0, le=MAX_MONTO)
+    monto: int = Field(gt=0, le=MAX_MONTO, strict=True)  # entero real: rechaza "200" o 200.5
     caida_a_mitad: bool = False   # inyección de fallo SOLO para la demo
 
 
@@ -122,12 +126,20 @@ class BusinessError(Exception):
 
 
 # ================================================================== VULNERABLE
+# Fallas intencionales (cada una se señala en el código):
+#   [F1] Sin transacción atómica: el débito se confirma antes de acreditar, sin rollback.  (A10)
+#   [F2] Errores devueltos tal cual: mensaje, tipo, SQL, ruta y traceback (CWE-209).       (A10)
+#   [F3] Sin validación de entrada: montos negativos y cuentas inexistentes.               (A06/A10)
+#   [F4] Solo se registran los éxitos: los fallos no dejan rastro.                         (A09)
+#   [F5] Sin límite de solicitudes.                                                         (A06)
 @app.post("/vulnerable/transfer")
-def vulnerable_transfer(t: Transfer):
+def vulnerable_transfer(t: Transfer):  # [F3] el modelo Transfer acepta casi cualquier cosa
+    # [F5] no hay rate limiting: se procesa cada solicitud que llega
     conn = connect("vulnerable")
     sql = ""
     try:
-        # Paso 1: debitar (y confirmar enseguida: no hay transacción atómica)
+        # [F1] Paso 1: debitar y confirmar enseguida (no hay transacción atómica)
+        # [F3] con monto negativo esto "debita" un valor negativo: el origen gana dinero
         sql = "UPDATE accounts SET balance = balance - ? WHERE id = ?"
         conn.execute(sql, (t.monto, t.origen))
         conn.commit()
@@ -142,11 +154,13 @@ def vulnerable_transfer(t: Transfer):
         conn.execute(sql, (t.monto, t.destino))
         conn.commit()
 
-        # Paso 3: registrar (solo se llega aquí si todo salió bien)
+        # [F4] Paso 3: registrar (solo se llega aquí si todo salió bien)
         write_audit("vulnerable", "TRANSFERENCIA_OK", f"{t.origen}->{t.destino} {t.monto}")
         return {"ok": True, "mensaje": "Transferencia realizada"}
     except Exception as e:
-        # MAL: se devuelve TODO al cliente (CWE-209), no hay rollback, no se registra nada
+        # [F2] se devuelve TODO al cliente (CWE-209)
+        # [F1] no hay rollback: el débito ya confirmado queda aplicado
+        # [F4] no se escribe nada en la bitácora
         return JSONResponse(
             status_code=500,
             content={
@@ -257,7 +271,8 @@ def secure_transfer(t: SecureTransfer, request: Request):
 async def validation_handler(request: Request, exc: RequestValidationError):
     if request.url.path.startswith("/secure"):
         error_id = uuid.uuid4().hex[:8]
-        log.warning("[%s] entrada inválida en %s", error_id, request.url.path)
+        log.warning("[%s] entrada inválida en %s: %s", error_id, request.url.path, exc.errors())
+        write_audit("secure", "TRANSFERENCIA_RECHAZADA", "entrada inválida", error_id)
         return JSONResponse(
             status_code=400,
             content={"ok": False, "error": "Datos de la transferencia inválidos", "error_id": error_id},
@@ -322,3 +337,10 @@ def reset(mode: str):
 @app.get("/")
 def index():
     return FileResponse(os.path.join(BASE, "static", "index.html"))
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    # Solo localhost: la demo nunca debe quedar expuesta en la red.
+    uvicorn.run(app, host="127.0.0.1", port=8000)
